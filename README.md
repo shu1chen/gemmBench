@@ -1,6 +1,11 @@
 # gemmBench
 int8_t gemm benchmark between Eigen, kpu's [intgemm](https://github.com/kpu/intgemm), [dnnl](https://github.com/intel/mkl-dnn), [fbgemm](https://github.com/pytorch/FBGEMM/), and [mkl](https://software.intel.com/content/www/us/en/develop/tools/math-kernel-library.html).
 
+## Update submodule
+```
+git submodule update --init --recursive
+```
+
 ## Compilation
 ```
 mkdir build
