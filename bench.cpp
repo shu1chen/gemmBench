@@ -126,18 +126,18 @@ void benchmarkLoop(int iterations, std::vector<matrix_size>& matrices, const siz
 
 
   std::chrono::duration<double> eigen_duration_loop = std::chrono::duration<double>::zero();
-  std::chrono::duration<double> dnnl_duration_loop = std::chrono::duration<double>::zero();
-  std::chrono::duration<double> dnnlU_duration_loop = std::chrono::duration<double>::zero();
-  std::chrono::duration<double> dnnlS_duration_loop = std::chrono::duration<double>::zero();
-  std::chrono::duration<double> dnnl32_duration_loop = std::chrono::duration<double>::zero();
-  std::chrono::duration<double> mkl_duration_loop = std::chrono::duration<double>::zero();
-  std::chrono::duration<double> mkl32_duration_loop = std::chrono::duration<double>::zero();
+  std::chrono::duration<double> dnnl_s8s8_duration_loop = std::chrono::duration<double>::zero();
+  std::chrono::duration<double> dnnl_u8s8_duration_loop = std::chrono::duration<double>::zero();
+  std::chrono::duration<double> dnnl_matmul_duration_loop = std::chrono::duration<double>::zero();
+  std::chrono::duration<double> dnnl_sgemm_duration_loop = std::chrono::duration<double>::zero();
+  std::chrono::duration<double> dnnl_cblas_sgemm_duration_loop = std::chrono::duration<double>::zero();
+  std::chrono::duration<double> mkl_s8u8_duration_loop = std::chrono::duration<double>::zero();
+  std::chrono::duration<double> mkl_cblas_sgemm_duration_loop = std::chrono::duration<double>::zero();
   std::chrono::duration<double> kenn_prepA_duration_loop = std::chrono::duration<double>::zero();
   std::chrono::duration<double> kenn_prepB_duration_loop = std::chrono::duration<double>::zero();
   std::chrono::duration<double> kenn_duration_loop = std::chrono::duration<double>::zero();
   std::chrono::duration<double> kennU_duration_loop = std::chrono::duration<double>::zero();
   std::chrono::duration<double> fbgemm_duration_loop = std::chrono::duration<double>::zero();
-  //std::chrono::duration<double> fbgemmSPM_duration_loop = std::chrono::duration<double>::zero();
 
   for (auto&& sizes : matrices) {
 
@@ -212,7 +212,7 @@ void benchmarkLoop(int iterations, std::vector<matrix_size>& matrices, const siz
               beta, C_DNNL.get(), ldc, oc.data());
       auto dnnl_end = std::chrono::system_clock::now();
 
-      dnnl_duration_loop += (dnnl_end - dnnl_start);
+      dnnl_s8s8_duration_loop += (dnnl_end - dnnl_start);
       if (status != dnnl_success) {
         std::cerr << "we died at " << i << std::endl;
         printDNNLStatus(status);
@@ -242,7 +242,7 @@ void benchmarkLoop(int iterations, std::vector<matrix_size>& matrices, const siz
                            C_MKL.get(), ldc, oc.data());
         auto mkl_end = std::chrono::system_clock::now();
 
-        mkl_duration_loop += (mkl_end - mkl_start);
+        mkl_s8u8_duration_loop += (mkl_end - mkl_start);
       }
 
       if (use_fp32) { // MKLcblas_Sgemm
@@ -270,7 +270,7 @@ void benchmarkLoop(int iterations, std::vector<matrix_size>& matrices, const siz
                            C_MKL.get(), ldc);// oc.data());
         auto mkl_end = std::chrono::system_clock::now();
 
-        mkl32_duration_loop += (mkl_end - mkl_start);
+        mkl_cblas_sgemm_duration_loop += (mkl_end - mkl_start);
       }
 #endif
 
@@ -299,127 +299,155 @@ void benchmarkLoop(int iterations, std::vector<matrix_size>& matrices, const siz
                            C_MKL.get(), ldc);// oc.data());
         auto dnnlfp32_end = std::chrono::system_clock::now();
 
-        dnnl32_duration_loop += (dnnlfp32_end - dnnlfp32_start);
+        dnnl_cblas_sgemm_duration_loop += (dnnlfp32_end - dnnlfp32_start);
       }
 
-      //Now intgemm
       Eigen::Matrix<float, Eigen::Dynamic,Eigen::Dynamic, Eigen::RowMajor> kenneth_a_tmp = A.cast<float>();
       Eigen::Matrix<float, Eigen::Dynamic,Eigen::Dynamic, Eigen::RowMajor> kenneth_b_tmp = B.cast<float>();
-
-      alloc::AlignedVector<float> A_proto(M * K, align);
-      alloc::AlignedVector<float> B_proto(K * N, align);
-
-      std::copy(kenneth_a_tmp.data(), kenneth_a_tmp.data() + kenneth_a_tmp.size(), A_proto.get());
-      std::copy(kenneth_b_tmp.data(), kenneth_b_tmp.data() + kenneth_b_tmp.size(), B_proto.get());
-
-
       float quant_mult = 127.0 / 2.0;
-      alloc::AlignedVector<int8_t> A_prepared(M * K, align);
-      alloc::AlignedVector<int8_t> B_prepared(K * N, align);
+      // intgemm
+      {
+        alloc::AlignedVector<float> A_proto(M * K, align);
+        alloc::AlignedVector<float> B_proto(K * N, align);
 
-      auto kenn_prepA_start = std::chrono::system_clock::now();
-      archInfo<architecture>::intgemm_::PrepareA(A_proto.get(), A_prepared.get(), quant_mult, M, K);
-      auto kenn_prepA_end = std::chrono::system_clock::now();
-      // Quantize and reshape B.
-      // Typically you will do this once when parameters are loaded, not every time.
-      auto kenn_prepB_start = std::chrono::system_clock::now();
-      archInfo<architecture>::intgemm_::PrepareB(B_proto.get(), B_prepared.get(), quant_mult, K, N);
-      auto kenn_prepB_end = std::chrono::system_clock::now();
+        std::copy(kenneth_a_tmp.data(), kenneth_a_tmp.data() + kenneth_a_tmp.size(), A_proto.get());
+        std::copy(kenneth_b_tmp.data(), kenneth_b_tmp.data() + kenneth_b_tmp.size(), B_proto.get());
 
-      alloc::AlignedVector<float> C_kenn(M*N, align);
+        alloc::AlignedVector<int8_t> A_prepared(M * K, align);
+        alloc::AlignedVector<int8_t> B_prepared(K * N, align);
 
-      auto kenn_start = std::chrono::system_clock::now();
-      archInfo<architecture>::intgemm_::Multiply(A_prepared.get(), B_prepared.get(), M, K, N, intgemm::callbacks::UnquantizeAndWrite(1.0 / (quant_mult * quant_mult), C_kenn.get()));
-      auto kenn_end = std::chrono::system_clock::now();
+        auto kenn_prepA_start = std::chrono::system_clock::now();
+        archInfo<architecture>::intgemm_::PrepareA(A_proto.get(), A_prepared.get(), quant_mult, M, K);
+        auto kenn_prepA_end = std::chrono::system_clock::now();
+        // Quantize and reshape B.
+        // Typically you will do this once when parameters are loaded, not every time.
+        auto kenn_prepB_start = std::chrono::system_clock::now();
+        archInfo<architecture>::intgemm_::PrepareB(B_proto.get(), B_prepared.get(), quant_mult, K, N);
+        auto kenn_prepB_end = std::chrono::system_clock::now();
 
-      kenn_duration_loop += (kenn_end - kenn_start);
+        alloc::AlignedVector<float> C_kenn(M*N, align);
 
-      kenn_prepA_duration_loop += (kenn_prepA_end - kenn_prepA_start);
-      kenn_prepB_duration_loop += (kenn_prepB_end - kenn_prepB_start);
+        auto kenn_start = std::chrono::system_clock::now();
+        archInfo<architecture>::intgemm_::Multiply(A_prepared.get(), B_prepared.get(), M, K, N, intgemm::callbacks::UnquantizeAndWrite(1.0 / (quant_mult * quant_mult), C_kenn.get()));
+        auto kenn_end = std::chrono::system_clock::now();
+
+        kenn_duration_loop += (kenn_end - kenn_start);
+
+        kenn_prepA_duration_loop += (kenn_prepA_end - kenn_prepA_start);
+        kenn_prepB_duration_loop += (kenn_prepB_end - kenn_prepB_start);
+      }
           
-      //MKL-DNN SignedXunsigned
-      // Copy onto aligned memory
-      alloc::AlignedVector<uint8_t> A1_DNNL(M*K, align);
-      alloc::AlignedVector<int8_t> B1_DNNL(K*N, align);
-      alloc::AlignedVector<int32_t> C1_DNNL(M*N, align);
+      //DNNL Signed unsigned
+      {
+        // Copy onto aligned memory
+        alloc::AlignedVector<uint8_t> A1_DNNL(M*K, align);
+        alloc::AlignedVector<int8_t> B1_DNNL(K*N, align);
+        alloc::AlignedVector<int32_t> C1_DNNL(M*N, align);
 
+        std::copy(A.data(), A.data() + A.size(), A1_DNNL.get());
+        std::copy(B.data(), B.data() + B.size(), B1_DNNL.get());
+        std::copy(C.data(), C.data() + C.size(), C1_DNNL.get());
 
-      std::copy(A.data(), A.data() + A.size(), A1_DNNL.get());
-      std::copy(B.data(), B.data() + B.size(), B1_DNNL.get());
-      std::copy(C.data(), C.data() + C.size(), C1_DNNL.get());
+        auto dnnlU_start = std::chrono::system_clock::now();
 
-      auto dnnlU_start = std::chrono::system_clock::now();
+        auto status1 = dnnl_gemm_u8s8s32(transA, transB, offsetc,
+                M, N, K, alpha, A1_DNNL.get(), lda, oa, B1_DNNL.get(), ldb, ob,
+                beta, C1_DNNL.get(), ldc, oc.data());
+        auto dnnlU_end = std::chrono::system_clock::now();
 
-      auto status1 = dnnl_gemm_u8s8s32(transA, transB, offsetc,
-              M, N, K, alpha, A1_DNNL.get(), lda, oa, B1_DNNL.get(), ldb, ob,
-              beta, C1_DNNL.get(), ldc, oc.data());
-      auto dnnlU_end = std::chrono::system_clock::now();
-
-      dnnlU_duration_loop += (dnnlU_end - dnnlU_start);
-      if (status1 != dnnl_success) {
-        std::cerr << "we died at " << i << std::endl;
-        printDNNLStatus(status1);
-        break;
+        dnnl_u8s8_duration_loop += (dnnlU_end - dnnlU_start);
+        if (status1 != dnnl_success) {
+          std::cerr << "we died at " << i << std::endl;
+          printDNNLStatus(status1);
+          break;
+        }
       }
 
-      //Now intgemm shifted
-      alloc::AlignedVector<float> A_proto1(M * K, align);
-      alloc::AlignedVector<float> B_proto1(K * N, align);
-      alloc::AlignedVector<float> inputBias(K, align);
-      std::fill(inputBias.get(), inputBias.get() + K, 0.0f);
+      //intgemm shifted
+      {
+        alloc::AlignedVector<float> A_proto1(M * K, align);
+        alloc::AlignedVector<float> B_proto1(K * N, align);
+        alloc::AlignedVector<float> inputBias(K, align);
+        std::fill(inputBias.get(), inputBias.get() + K, 0.0f);
 
-      std::copy(kenneth_a_tmp.data(), kenneth_a_tmp.data() + kenneth_a_tmp.size(), A_proto1.get());
-      std::copy(kenneth_b_tmp.data(), kenneth_b_tmp.data() + kenneth_b_tmp.size(), B_proto1.get());
+        std::copy(kenneth_a_tmp.data(), kenneth_a_tmp.data() + kenneth_a_tmp.size(), A_proto1.get());
+        std::copy(kenneth_b_tmp.data(), kenneth_b_tmp.data() + kenneth_b_tmp.size(), B_proto1.get());
 
+        //float quant_mult = 127.0 / 2.0;
+        alloc::AlignedVector<int8_t> A_prepared1(M * K, align); //@TODO API CHANGE
+        alloc::AlignedVector<int8_t> B_prepared1(K * N, align);
 
-      //float quant_mult = 127.0 / 2.0;
-      alloc::AlignedVector<int8_t> A_prepared1(M * K, align); //@TODO API CHANGE
-      alloc::AlignedVector<int8_t> B_prepared1(K * N, align);
+        archInfo<architecture>::intgemmShift_::PrepareA(A_proto1.get(), A_prepared1.get(), quant_mult, M, K);
+        // Quantize and reshape B.
+        // Typically you will do this once when parameters are loaded, not every time.
+        archInfo<architecture>::intgemmShift_::PrepareB(B_proto1.get(), B_prepared1.get(), quant_mult, K, N);
 
-      archInfo<architecture>::intgemmShift_::PrepareA(A_proto1.get(), A_prepared1.get(), quant_mult, M, K);
-      // Quantize and reshape B.
-      // Typically you will do this once when parameters are loaded, not every time.
-      archInfo<architecture>::intgemmShift_::PrepareB(B_proto1.get(), B_prepared1.get(), quant_mult, K, N);
+        float unquant_mult_forprep = (-1)*(2.0)*(2.0)/(127.0f);
 
-      float unquant_mult_forprep = (-1)*(2.0)*(2.0)/(127.0f);
+        //PrepareBias
+        archInfo<architecture>::intgemmShift_::PrepareBias(B_prepared1.get(), K, N, intgemm::callbacks::UnquantizeAndAddBiasAndWrite(unquant_mult_forprep, inputBias.get(), inputBias.get()));
 
-      //PrepareBias
-      archInfo<architecture>::intgemmShift_::PrepareBias(B_prepared1.get(), K, N, intgemm::callbacks::UnquantizeAndAddBiasAndWrite(unquant_mult_forprep, inputBias.get(), inputBias.get()));
+        alloc::AlignedVector<float> C_kenn1(M*N, align);
 
-      alloc::AlignedVector<float> C_kenn1(M*N, align);
+        auto kennU_start = std::chrono::system_clock::now();
+        archInfo<architecture>::intgemmShift_::Multiply(A_prepared1.get(), B_prepared1.get(), M, K, N, intgemm::callbacks::UnquantizeAndAddBiasAndWrite(1.0 / (quant_mult * quant_mult), inputBias.get(), C_kenn1.get()));
+        auto kennU_end = std::chrono::system_clock::now();
 
-      auto kennU_start = std::chrono::system_clock::now();
-      archInfo<architecture>::intgemmShift_::Multiply(A_prepared1.get(), B_prepared1.get(), M, K, N, intgemm::callbacks::UnquantizeAndAddBiasAndWrite(1.0 / (quant_mult * quant_mult), inputBias.get(), C_kenn1.get()));
-      auto kennU_end = std::chrono::system_clock::now();
+        kennU_duration_loop += (kennU_end - kennU_start);
+      }
 
-      kennU_duration_loop += (kennU_end - kennU_start);
+      //DNNL matmul
+      {
+        alloc::AlignedVector<float> A_DNNL_MATMUL(M*K, align);
+        alloc::AlignedVector<float> B_DNNL_MATMUL(K*N, align);
+        alloc::AlignedVector<float> C_DNNL_MATMUL(M*N, align);
 
+        std::copy(kenneth_a_tmp.data(), kenneth_a_tmp.data() + kenneth_a_tmp.size(), A_DNNL_MATMUL.get());
+        std::copy(kenneth_b_tmp.data(), kenneth_b_tmp.data() + kenneth_b_tmp.size(), B_DNNL_MATMUL.get());
+        std::copy(C.data(), C.data() + C.size(), C_DNNL_MATMUL.get());
 
-      //DNNLDNN Single precision
-      alloc::AlignedVector<float> A_DNNL_S(M*K, align);
-      alloc::AlignedVector<float> B_DNNL_S(K*N, align);
-      alloc::AlignedVector<float> C_DNNL_S(M*N, align);
+        auto dnnl_matmul_start = std::chrono::system_clock::now();
 
-      std::copy(kenneth_a_tmp.data(), kenneth_a_tmp.data() + kenneth_a_tmp.size(), A_DNNL_S.get());
-      std::copy(kenneth_b_tmp.data(), kenneth_b_tmp.data() + kenneth_b_tmp.size(), B_DNNL_S.get());
-      std::copy(C.data(), C.data() + C.size(), C_DNNL_S.get());
+        auto status2 = dnnl_sgemm(transA, transB,
+                M, N, K, alpha, A_DNNL_MATMUL.get(), lda, B_DNNL_MATMUL.get(), ldb,
+                beta, C_DNNL_MATMUL.get(), ldc);
+        auto dnnl_matmul_end = std::chrono::system_clock::now();
 
-      auto dnnlS_start = std::chrono::system_clock::now();
+        dnnl_matmul_duration_loop += (dnnl_matmul_end - dnnl_matmul_start);
+        if (status2 != dnnl_success) {
+          std::cerr << "we died at " << i << std::endl;
+          printDNNLStatus(status2);
+          break;
+        }
+      }
 
-      auto status2 = dnnl_sgemm(transA, transB,
-              M, N, K, alpha, A_DNNL_S.get(), lda, B_DNNL_S.get(), ldb,
-              beta, C_DNNL_S.get(), ldc);
-      auto dnnlS_end = std::chrono::system_clock::now();
+      //DNNL sgemm
+      {
+        alloc::AlignedVector<float> A_DNNL_S(M*K, align);
+        alloc::AlignedVector<float> B_DNNL_S(K*N, align);
+        alloc::AlignedVector<float> C_DNNL_S(M*N, align);
 
-      dnnlS_duration_loop += (dnnlS_end - dnnlS_start);
-      if (status2 != dnnl_success) {
-        std::cerr << "we died at " << i << std::endl;
-        printDNNLStatus(status2);
-        break;
+        std::copy(kenneth_a_tmp.data(), kenneth_a_tmp.data() + kenneth_a_tmp.size(), A_DNNL_S.get());
+        std::copy(kenneth_b_tmp.data(), kenneth_b_tmp.data() + kenneth_b_tmp.size(), B_DNNL_S.get());
+        std::copy(C.data(), C.data() + C.size(), C_DNNL_S.get());
+
+        auto dnnlS_start = std::chrono::system_clock::now();
+
+        auto status2 = dnnl_sgemm(transA, transB,
+                M, N, K, alpha, A_DNNL_S.get(), lda, B_DNNL_S.get(), ldb,
+                beta, C_DNNL_S.get(), ldc);
+        auto dnnlS_end = std::chrono::system_clock::now();
+
+        dnnl_sgemm_duration_loop += (dnnlS_end - dnnlS_start);
+        if (status2 != dnnl_success) {
+          std::cerr << "we died at " << i << std::endl;
+          printDNNLStatus(status2);
+          break;
+        }
       }
 
       if (use_fbgemm) {
-        //Now fbgemm
+        //packed fbgemm
         alloc::AlignedVector<uint8_t> A_FBGEMM(M*K, align);
         alloc::AlignedVector<int8_t> B_FBGEMM(K*N, align);
         alloc::AlignedVector<int32_t> C_FBGEMM(M*N, align);
@@ -430,52 +458,44 @@ void benchmarkLoop(int iterations, std::vector<matrix_size>& matrices, const siz
         std::copy(C.data(), C.data() + C.size(), C_FBGEMM.get());
 
         fbgemm_duration_loop += fbgemm::fbgemmPackedTimes(A_FBGEMM, B_FBGEMM, C_FBGEMM, M, N, K);
-
-        //And fbgemm again
-
-        alloc::AlignedVector<uint8_t> A_FBGEMM1(M*K, align);
-        alloc::AlignedVector<int8_t> B_FBGEMM1(K*N, align);
-        alloc::AlignedVector<int32_t> C_FBGEMM1(M*N, align);
-
-
-        std::copy(A.data(), A.data() + A.size(), A_FBGEMM1.get());
-        std::copy(B.data(), B.data() + B.size(), B_FBGEMM1.get());
-        std::copy(C.data(), C.data() + C.size(), C_FBGEMM1.get());
-
-
-        //fbgemmSPM_duration_loop += fbgemm::fbgemmSPMTimes(A_FBGEMM1, B_FBGEMM1, C_FBGEMM1, M, N, K);
       }
       /*First dnnl and fbgemm calls are slow, so ignore results from the first run of the loop*/
       if (i == 0) {
         eigen_duration_loop = std::chrono::duration<double>::zero();
-        dnnl_duration_loop = std::chrono::duration<double>::zero();
-        dnnlU_duration_loop = std::chrono::duration<double>::zero();
-        dnnlS_duration_loop = std::chrono::duration<double>::zero();
-        mkl_duration_loop = std::chrono::duration<double>::zero();
+        dnnl_s8s8_duration_loop = std::chrono::duration<double>::zero();
+        dnnl_u8s8_duration_loop = std::chrono::duration<double>::zero();
+        dnnl_matmul_duration_loop = std::chrono::duration<double>::zero();
+        dnnl_sgemm_duration_loop = std::chrono::duration<double>::zero();
+        mkl_s8u8_duration_loop = std::chrono::duration<double>::zero();
         kenn_prepA_duration_loop = std::chrono::duration<double>::zero();
         kenn_prepB_duration_loop = std::chrono::duration<double>::zero();
         kenn_duration_loop = std::chrono::duration<double>::zero();
         kennU_duration_loop = std::chrono::duration<double>::zero();
         fbgemm_duration_loop = std::chrono::duration<double>::zero();
-        //fbgemmSPM_duration_loop = std::chrono::duration<double>::zero();
       }
     }
     std::cout << std::fixed;
     std::cout.precision(3);
     std::cout << "Arch: " << myarch << std::endl << sizes << " in loop, for " << iterations << " interations, avg:" << std::endl;
+
+    std::cout <<  "                      DNNL matmul took: " << dnnl_matmul_duration_loop.count() * 10e6 / iterations << " ms." << std::endl;
+    std::cout <<  "                       DNNL sgemm took: " << dnnl_sgemm_duration_loop.count() * 10e6 / iterations << " ms." << std::endl;
+    if (use_fp32)
+      std::cout <<"                 DNNL cblas_sgemm took: " << dnnl_cblas_sgemm_duration_loop.count() * 10e6 / iterations << " ms." << std::endl;
+#ifdef WITH_MKL
+    if (use_fp32)
+      std::cout <<"                  MKL cblas_sgemm took: " << mkl_cblas_sgemm_duration_loop.count() * 10e6 / iterations << " ms." << std::endl;
+#endif
     if (use_eigen)
       std::cout <<"                    Eigen i32gemm took: " << eigen_duration_loop.count() * 10e6 / iterations << " ms." << std::endl;
 
-    std::cout <<  "                DNNL s8s8s32 gemm took: " << dnnl_duration_loop.count() * 10e6 / iterations << " ms." << std::endl <<
-                  "                DNNL u8s8s32 gemm took: " << dnnlU_duration_loop.count() * 10e6 / iterations << " ms." << std::endl <<
-                  "                       DNNL sgemm took: " << dnnlS_duration_loop.count() * 10e6 / iterations << " ms." << std::endl;
+    std::cout <<  "                DNNL s8s8s32 gemm took: " << dnnl_s8s8_duration_loop.count() * 10e6 / iterations << " ms." << std::endl <<
+                  "                DNNL u8s8s32 gemm took: " << dnnl_u8s8_duration_loop.count() * 10e6 / iterations << " ms." << std::endl;
+
 #ifdef WITH_MKL
-      std::cout <<"           MKL cblas_gemm_s8u8s32 took: " << mkl_duration_loop.count() * 10e6 / iterations << " ms." << std::endl;
-    if (use_fp32)
-      std::cout <<"                  MKL cblas_sgemm took: " << mkl32_duration_loop.count() * 10e6 / iterations << " ms." << std::endl;
+      std::cout <<"                 MKL s8u8s32 gemm took: " << mkl_s8u8_duration_loop.count() * 10e6 / iterations << " ms." << std::endl;
 #endif
-    if (use_fp32)
-      std::cout <<"                 DNNL cblas_sgemm took: " << dnnl32_duration_loop.count() * 10e6 / iterations << " ms." << std::endl;
+
   std::cout <<    "                          Intgemm took: " << kenn_duration_loop.count() * 10e6 / iterations << " ms." << std::endl <<
                   "                  Intgemm Shifted took: " << kennU_duration_loop.count() * 10e6 / iterations << " ms." << std::endl <<
                   "               Intgemm with prepA took: " << (kenn_duration_loop.count() + kenn_prepA_duration_loop.count())  * 10e6 / iterations << " ms." << std::endl <<
@@ -483,9 +503,7 @@ void benchmarkLoop(int iterations, std::vector<matrix_size>& matrices, const siz
                   "  Intgemm Shifted took with prepA took: " << (kennU_duration_loop.count() + kenn_prepA_duration_loop.count()) * 10e6 / iterations << " ms." << std::endl <<
                   "Intgemm Shifted took with prepA+B took: " << (kennU_duration_loop.count() + kenn_prepA_duration_loop.count() + kenn_prepB_duration_loop.count()) * 10e6 / iterations << " ms." << std::endl;
     if (use_fbgemm) {
-      std::cout << 
-                  //"fbgemm SparseXDense took: " << fbgemmSPM_duration_loop.count() * 10e6 / iterations << " ms." << std::endl <<
-                  "                    fbgemm Packed took: " << fbgemm_duration_loop.count() * 10e6 / iterations << " ms." << std::endl;
+      std::cout <<"                           fbgemm took: " << fbgemm_duration_loop.count() * 10e6 / iterations << " ms." << std::endl;
     }
                   
                      std::cout << "Alignment was: " << align << "." << std::endl;
@@ -532,7 +550,7 @@ int main(int argc, char const *argv[]) {
     std::exit(1);
   }
 
-  bool use_fp32 = false; // Compare the 32bit thingies.
+  bool use_fp32 = true; // Compare the 32bit.
 
   std::vector<matrix_size> matrices = {
     {1024, 1024, 1024},
