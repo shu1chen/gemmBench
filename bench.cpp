@@ -2,7 +2,7 @@
 #include <vector>
 #include "Eigen/Dense"
 #include <iostream>
-#include "dnnl.h"
+#include "oneapi/dnnl/dnnl.hpp"
 #include <chrono>
 #include "intgemm/intgemm.h"
 #include "aligned.h"
@@ -14,6 +14,10 @@
 #ifdef WITH_MKL
 #include <mkl.h>
 #endif
+
+using namespace dnnl;
+using tag = memory::format_tag;
+using dt = memory::data_type;
 
 void printDNNLStatus(dnnl_status_t& status) {
   if (status == dnnl_success) {
@@ -175,10 +179,43 @@ void benchmarkLoop(int iterations, std::vector<matrix_size>& matrices, const siz
     int8_t ob = 0;
     std::array<int32_t, 1> oc = {0};
 
+    //// DNNL Matmul
+    // Create execution dnnl::engine.
+    dnnl::engine engine(engine::kind::cpu, 0);
+    // Create dnnl::stream.
+    dnnl::stream engine_stream(engine);
+    // Source (A), weights (B), and destination (C) matrix dimensions.
+    memory::dims a_dims = {M, K};
+    memory::dims b_dims = {K, N};
+    memory::dims c_dims = {M, N};
+    memory::data_type type = dt::f32;
+    // Create memory descriptors and memory objects for src, weights, bias, and dst.
+    auto a_md = memory::desc(a_dims, type, tag::any);
+    auto b_md = memory::desc(b_dims, type, tag::any);
+    auto c_md = memory::desc(c_dims, type, tag::any);
+    auto a_in_md = memory::desc(a_dims, type, tag::ab);
+    auto b_in_md = memory::desc(b_dims, type, tag::ab);
+    auto a_in_mem = memory(a_in_md, engine);
+    auto b_in_mem = memory(b_in_md, engine);
+    // Create primitive descriptor.
+    auto matmul_pd = matmul::primitive_desc(engine, a_md, b_md, c_md);
+    // Repack and convert input data.
+    auto a_mem = memory(matmul_pd.src_desc(), engine);
+    reorder(a_in_mem, a_mem).execute(engine_stream, a_in_mem, a_mem);
+    auto b_mem = memory(matmul_pd.weights_desc(), engine);
+    reorder(b_in_mem, b_mem).execute(engine_stream, b_in_mem, b_mem);
+    auto c_mem = memory(matmul_pd.dst_desc(), engine);
+    // Create the primitive.
+    auto matmul_prim = matmul(matmul_pd);
+    // Primitive arguments.
+    std::unordered_map<int, memory> matmul_args;
+    matmul_args.insert({DNNL_ARG_SRC, a_mem});
+    matmul_args.insert({DNNL_ARG_WEIGHTS, b_mem});
+    matmul_args.insert({DNNL_ARG_DST, c_mem});
+
     for (int i = 0; i<iterations + 1; i++) {
 
       //Construct matrices
-
       Eigen::Matrix<int8_t, Eigen::Dynamic,Eigen::Dynamic, Eigen::RowMajor> A = Eigen::Matrix<int8_t, Eigen::Dynamic,Eigen::Dynamic>::Random(M,K);
       Eigen::Matrix<int8_t, Eigen::Dynamic,Eigen::Dynamic, Eigen::RowMajor> B = Eigen::Matrix<int8_t, Eigen::Dynamic,Eigen::Dynamic>::Random(K,N);
       Eigen::Matrix<int32_t, Eigen::Dynamic,Eigen::Dynamic, Eigen::RowMajor> C = Eigen::Matrix<int32_t, Eigen::Dynamic,Eigen::Dynamic>::Random(M,N);
@@ -208,7 +245,7 @@ void benchmarkLoop(int iterations, std::vector<matrix_size>& matrices, const siz
         eigen_duration_loop += (eingen_end - eigen_start);
       }
 
-      //MKL-DNN
+      //dnnl_gemm_s8s8s32
       {
         // Copy onto aligned memory
         alloc::AlignedVector<int8_t> A_DNNL(M*K, align);
@@ -235,6 +272,7 @@ void benchmarkLoop(int iterations, std::vector<matrix_size>& matrices, const siz
       }
 
 #ifdef WITH_MKL
+      // cblas_gemm_s8u8s32
       {
         alloc::AlignedVector<int8_t> A_MKL(M*K, align);
         alloc::AlignedVector<int8_t> B_MKL(K*N, align);
@@ -260,7 +298,7 @@ void benchmarkLoop(int iterations, std::vector<matrix_size>& matrices, const siz
         mkl_s8u8_duration_loop += (mkl_end - mkl_start);
       }
 
-      if (use_fp32) { // MKLcblas_Sgemm
+      if (use_fp32) { // MKL cblas_sgemm
         Eigen::Matrix<float, Eigen::Dynamic,Eigen::Dynamic> eigen_A_tmp = A.cast<float>();
         Eigen::Matrix<float, Eigen::Dynamic,Eigen::Dynamic> eigen_B_tmp = B.cast<float>();
 
@@ -292,6 +330,52 @@ void benchmarkLoop(int iterations, std::vector<matrix_size>& matrices, const siz
       Eigen::Matrix<float, Eigen::Dynamic,Eigen::Dynamic, Eigen::RowMajor> kenneth_a_tmp = A.cast<float>();
       Eigen::Matrix<float, Eigen::Dynamic,Eigen::Dynamic, Eigen::RowMajor> kenneth_b_tmp = B.cast<float>();
       float quant_mult = 127.0 / 2.0;
+
+      //DNNL matmul
+      {
+        alloc::AlignedVector<float> A_DNNL_MATMUL(M*K, align);
+        alloc::AlignedVector<float> B_DNNL_MATMUL(K*N, align);
+        alloc::AlignedVector<float> C_DNNL_MATMUL(M*N, align);
+
+        // Write data to memory object's handles.
+        std::copy(kenneth_a_tmp.data(), kenneth_a_tmp.data() + kenneth_a_tmp.size(), static_cast<uint8_t *>(a_in_mem.get_data_handle()));
+        std::copy(kenneth_b_tmp.data(), kenneth_b_tmp.data() + kenneth_b_tmp.size(), static_cast<uint8_t *>(b_in_mem.get_data_handle()));
+
+        auto dnnl_matmul_start = std::chrono::system_clock::now();
+
+        matmul_prim.execute(engine_stream, matmul_args);
+
+        auto dnnl_matmul_end = std::chrono::system_clock::now();
+
+        dnnl_matmul_duration_loop += (dnnl_matmul_end - dnnl_matmul_start);
+
+      }
+
+      //DNNL sgemm
+      {
+        alloc::AlignedVector<float> A_DNNL_S(M*K, align);
+        alloc::AlignedVector<float> B_DNNL_S(K*N, align);
+        alloc::AlignedVector<float> C_DNNL_S(M*N, align);
+
+        std::copy(kenneth_a_tmp.data(), kenneth_a_tmp.data() + kenneth_a_tmp.size(), A_DNNL_S.get());
+        std::copy(kenneth_b_tmp.data(), kenneth_b_tmp.data() + kenneth_b_tmp.size(), B_DNNL_S.get());
+        std::copy(C.data(), C.data() + C.size(), C_DNNL_S.get());
+
+        auto dnnlS_start = std::chrono::system_clock::now();
+
+        auto status2 = dnnl_sgemm(transA, transB,
+                M, N, K, alpha, A_DNNL_S.get(), lda, B_DNNL_S.get(), ldb,
+                beta, C_DNNL_S.get(), ldc);
+        auto dnnlS_end = std::chrono::system_clock::now();
+
+        dnnl_sgemm_duration_loop += (dnnlS_end - dnnlS_start);
+        if (status2 != dnnl_success) {
+          std::cerr << "we died at " << i << std::endl;
+          printDNNLStatus(status2);
+          break;
+        }
+      }
+
       // intgemm
       {
         alloc::AlignedVector<float> A_proto(M * K, align);
@@ -381,56 +465,6 @@ void benchmarkLoop(int iterations, std::vector<matrix_size>& matrices, const siz
         auto kennU_end = std::chrono::system_clock::now();
 
         kennU_duration_loop += (kennU_end - kennU_start);
-      }
-
-      //DNNL matmul
-      {
-        alloc::AlignedVector<float> A_DNNL_MATMUL(M*K, align);
-        alloc::AlignedVector<float> B_DNNL_MATMUL(K*N, align);
-        alloc::AlignedVector<float> C_DNNL_MATMUL(M*N, align);
-
-        std::copy(kenneth_a_tmp.data(), kenneth_a_tmp.data() + kenneth_a_tmp.size(), A_DNNL_MATMUL.get());
-        std::copy(kenneth_b_tmp.data(), kenneth_b_tmp.data() + kenneth_b_tmp.size(), B_DNNL_MATMUL.get());
-        std::copy(C.data(), C.data() + C.size(), C_DNNL_MATMUL.get());
-
-        auto dnnl_matmul_start = std::chrono::system_clock::now();
-
-        auto status2 = dnnl_sgemm(transA, transB,
-                M, N, K, alpha, A_DNNL_MATMUL.get(), lda, B_DNNL_MATMUL.get(), ldb,
-                beta, C_DNNL_MATMUL.get(), ldc);
-        auto dnnl_matmul_end = std::chrono::system_clock::now();
-
-        dnnl_matmul_duration_loop += (dnnl_matmul_end - dnnl_matmul_start);
-        if (status2 != dnnl_success) {
-          std::cerr << "we died at " << i << std::endl;
-          printDNNLStatus(status2);
-          break;
-        }
-      }
-
-      //DNNL sgemm
-      {
-        alloc::AlignedVector<float> A_DNNL_S(M*K, align);
-        alloc::AlignedVector<float> B_DNNL_S(K*N, align);
-        alloc::AlignedVector<float> C_DNNL_S(M*N, align);
-
-        std::copy(kenneth_a_tmp.data(), kenneth_a_tmp.data() + kenneth_a_tmp.size(), A_DNNL_S.get());
-        std::copy(kenneth_b_tmp.data(), kenneth_b_tmp.data() + kenneth_b_tmp.size(), B_DNNL_S.get());
-        std::copy(C.data(), C.data() + C.size(), C_DNNL_S.get());
-
-        auto dnnlS_start = std::chrono::system_clock::now();
-
-        auto status2 = dnnl_sgemm(transA, transB,
-                M, N, K, alpha, A_DNNL_S.get(), lda, B_DNNL_S.get(), ldb,
-                beta, C_DNNL_S.get(), ldc);
-        auto dnnlS_end = std::chrono::system_clock::now();
-
-        dnnl_sgemm_duration_loop += (dnnlS_end - dnnlS_start);
-        if (status2 != dnnl_success) {
-          std::cerr << "we died at " << i << std::endl;
-          printDNNLStatus(status2);
-          break;
-        }
       }
 
       if (use_fbgemm) {
@@ -561,7 +595,7 @@ int main(int argc, char const *argv[]) {
     {472, 256, 256},
     {248, 256, 256},
     {200, 256, 256},
-    {1, 64, 8}};//zero, one, two, three, four, five, six, seven, eight};
+    {1, 64, 8}};
 
   //fbgemm only supports AVX2 and above and doesn't support architecture limitations
   bool use_fbgemm = true;
