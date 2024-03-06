@@ -9,10 +9,11 @@
 #include <unordered_map>
 #include "fbgemm_tests.h"
 
-#ifdef WITH_MKL
-#  include <mkl.h>
-#endif
+#include <fstream>
 
+#ifdef WITH_MKL
+#include <mkl.h>
+#endif
 
 void printDNNLStatus(dnnl_status_t& status) {
   if (status == dnnl_success) {
@@ -107,6 +108,13 @@ std::ostream& operator<<(std::ostream& os, const archInfo<A>& a) {
   return os;
 }
 
+std::string generateTimestamp() {
+    std::time_t now = std::time(nullptr);
+    char timestamp[20];
+    std::strftime(timestamp, sizeof(timestamp), "%Y%m%d_%H%M%S", std::localtime(&now));
+    return std::string(timestamp);
+}
+
 template<Arch architecture>
 void benchmarkLoop(int iterations, std::vector<matrix_size>& matrices, const size_t align, bool use_fbgemm, bool use_eigen, bool use_fp32) {
 
@@ -116,7 +124,7 @@ void benchmarkLoop(int iterations, std::vector<matrix_size>& matrices, const siz
   if (arch_status != dnnl_success) {
     std::cerr << "We couldn't set arch: " << std::endl;
     printDNNLStatus(arch_status);
-    return;
+    std::exit(1);
   }
 
 #ifdef WITH_MKL
@@ -124,13 +132,11 @@ void benchmarkLoop(int iterations, std::vector<matrix_size>& matrices, const siz
     mkl_enable_instructions(myarch.mkl_);
 #endif
 
-
   std::chrono::duration<double> eigen_duration_loop = std::chrono::duration<double>::zero();
   std::chrono::duration<double> dnnl_s8s8_duration_loop = std::chrono::duration<double>::zero();
   std::chrono::duration<double> dnnl_u8s8_duration_loop = std::chrono::duration<double>::zero();
   std::chrono::duration<double> dnnl_matmul_duration_loop = std::chrono::duration<double>::zero();
   std::chrono::duration<double> dnnl_sgemm_duration_loop = std::chrono::duration<double>::zero();
-  std::chrono::duration<double> dnnl_cblas_sgemm_duration_loop = std::chrono::duration<double>::zero();
   std::chrono::duration<double> mkl_s8u8_duration_loop = std::chrono::duration<double>::zero();
   std::chrono::duration<double> mkl_cblas_sgemm_duration_loop = std::chrono::duration<double>::zero();
   std::chrono::duration<double> kenn_prepA_duration_loop = std::chrono::duration<double>::zero();
@@ -138,6 +144,16 @@ void benchmarkLoop(int iterations, std::vector<matrix_size>& matrices, const siz
   std::chrono::duration<double> kenn_duration_loop = std::chrono::duration<double>::zero();
   std::chrono::duration<double> kennU_duration_loop = std::chrono::duration<double>::zero();
   std::chrono::duration<double> fbgemm_duration_loop = std::chrono::duration<double>::zero();
+
+  std::string timestamp = generateTimestamp();
+  std::string filename = "perf_data_" + timestamp + ".csv";
+  std::ofstream outFile(filename, std::ios::out);
+  if (!outFile.is_open()) {
+    std::cerr << "Error: opening file failed." << std::endl;
+    return;
+  }
+  outFile << "Arch,Matrix size MxKxN,Interations,DNNL matmul avg (ms),DNNL sgemm avg (ms),MKL cblas_sgemm avg (ms),DNNL s8s8s32 gemm avg (ms),"
+          << "DNNL u8s8s32 gemm avg (ms),MKL s8u8s32 gemm avg (ms),Intgemm avg (ms),fbgemm avg (ms)" << std::endl;
 
   for (auto&& sizes : matrices) {
 
@@ -186,8 +202,6 @@ void benchmarkLoop(int iterations, std::vector<matrix_size>& matrices, const siz
         Eigen::Map<Eigen::Matrix<int32_t, Eigen::Dynamic, Eigen::Dynamic, Eigen::ColMajor> > eigen_b(B_EIGEN.get(), K, N);
         Eigen::Map<Eigen::Matrix<int32_t, Eigen::Dynamic, Eigen::Dynamic, Eigen::ColMajor> > eigen_c(C_EIGEN.get(), M, N);
 
-
-
         auto eigen_start = std::chrono::system_clock::now();
         eigen_c.noalias() += (eigen_a*(int)alpha)*(eigen_b*(int)beta);
         auto eingen_end = std::chrono::system_clock::now();
@@ -195,28 +209,29 @@ void benchmarkLoop(int iterations, std::vector<matrix_size>& matrices, const siz
       }
 
       //MKL-DNN
-      // Copy onto aligned memory
-      alloc::AlignedVector<int8_t> A_DNNL(M*K, align);
-      alloc::AlignedVector<int8_t> B_DNNL(K*N, align);
-      alloc::AlignedVector<int32_t> C_DNNL(M*N, align);
+      {
+        // Copy onto aligned memory
+        alloc::AlignedVector<int8_t> A_DNNL(M*K, align);
+        alloc::AlignedVector<int8_t> B_DNNL(K*N, align);
+        alloc::AlignedVector<int32_t> C_DNNL(M*N, align);
 
+        std::copy(A.data(), A.data() + A.size(), A_DNNL.get());
+        std::copy(B.data(), B.data() + B.size(), B_DNNL.get());
+        std::copy(C.data(), C.data() + C.size(), C_DNNL.get());
 
-      std::copy(A.data(), A.data() + A.size(), A_DNNL.get());
-      std::copy(B.data(), B.data() + B.size(), B_DNNL.get());
-      std::copy(C.data(), C.data() + C.size(), C_DNNL.get());
+        auto dnnl_start = std::chrono::system_clock::now();
 
-      auto dnnl_start = std::chrono::system_clock::now();
+        auto status = dnnl_gemm_s8s8s32(transA, transB, offsetc,
+                M, N, K, alpha, A_DNNL.get(), lda, oa, B_DNNL.get(), ldb, ob,
+                beta, C_DNNL.get(), ldc, oc.data());
+        auto dnnl_end = std::chrono::system_clock::now();
 
-      auto status = dnnl_gemm_s8s8s32(transA, transB, offsetc,
-              M, N, K, alpha, A_DNNL.get(), lda, oa, B_DNNL.get(), ldb, ob,
-              beta, C_DNNL.get(), ldc, oc.data());
-      auto dnnl_end = std::chrono::system_clock::now();
-
-      dnnl_s8s8_duration_loop += (dnnl_end - dnnl_start);
-      if (status != dnnl_success) {
-        std::cerr << "we died at " << i << std::endl;
-        printDNNLStatus(status);
-        break;
+        dnnl_s8s8_duration_loop += (dnnl_end - dnnl_start);
+        if (status != dnnl_success) {
+          std::cerr << "we died at " << i << std::endl;
+          printDNNLStatus(status);
+          break;
+        }
       }
 
 #ifdef WITH_MKL
@@ -273,34 +288,6 @@ void benchmarkLoop(int iterations, std::vector<matrix_size>& matrices, const siz
         mkl_cblas_sgemm_duration_loop += (mkl_end - mkl_start);
       }
 #endif
-
-      if (use_fp32) { // oneDNN cblas_Sgemm
-        Eigen::Matrix<float, Eigen::Dynamic,Eigen::Dynamic> eigen_A_tmp = A.cast<float>();
-        Eigen::Matrix<float, Eigen::Dynamic,Eigen::Dynamic> eigen_B_tmp = B.cast<float>();
-
-        alloc::AlignedVector<float> A_MKL(M*K, align);
-        alloc::AlignedVector<float> B_MKL(K*N, align);
-        alloc::AlignedVector<float> C_MKL(M*N, align);
-
-        std::copy(eigen_A_tmp.data(), eigen_A_tmp.data() + eigen_A_tmp.size(), A_MKL.get());
-        std::copy(eigen_B_tmp.data(), eigen_B_tmp.data() + eigen_B_tmp.size(), B_MKL.get());
-        std::copy(C.data(), C.data() + C.size(), C_MKL.get());
-
-        auto dnnlfp32_start = std::chrono::system_clock::now();
-        cblas_sgemm(CblasRowMajor,
-                           transA == 'N' ? CblasNoTrans : CblasTrans,
-                           transB == 'N' ? CblasNoTrans : CblasTrans,
-                           /*CblasFixOffset,*/
-                           M, N, K,
-                           alpha,
-                           A_MKL.get(), lda,// oa,
-                           B_MKL.get(), ldb,// ob,
-                           beta,
-                           C_MKL.get(), ldc);// oc.data());
-        auto dnnlfp32_end = std::chrono::system_clock::now();
-
-        dnnl_cblas_sgemm_duration_loop += (dnnlfp32_end - dnnlfp32_start);
-      }
 
       Eigen::Matrix<float, Eigen::Dynamic,Eigen::Dynamic, Eigen::RowMajor> kenneth_a_tmp = A.cast<float>();
       Eigen::Matrix<float, Eigen::Dynamic,Eigen::Dynamic, Eigen::RowMajor> kenneth_b_tmp = B.cast<float>();
@@ -476,12 +463,10 @@ void benchmarkLoop(int iterations, std::vector<matrix_size>& matrices, const siz
     }
     std::cout << std::fixed;
     std::cout.precision(3);
-    std::cout << "Arch: " << myarch << std::endl << sizes << " in loop, for " << iterations << " interations, avg:" << std::endl;
+    std::cout << "Arch: " << myarch << std::endl << sizes << " in loop, for " << iterations << " iterations, avg:" << std::endl;
 
     std::cout <<  "                      DNNL matmul took: " << dnnl_matmul_duration_loop.count() * 10e6 / iterations << " ms." << std::endl;
     std::cout <<  "                       DNNL sgemm took: " << dnnl_sgemm_duration_loop.count() * 10e6 / iterations << " ms." << std::endl;
-    if (use_fp32)
-      std::cout <<"                 DNNL cblas_sgemm took: " << dnnl_cblas_sgemm_duration_loop.count() * 10e6 / iterations << " ms." << std::endl;
 #ifdef WITH_MKL
     if (use_fp32)
       std::cout <<"                  MKL cblas_sgemm took: " << mkl_cblas_sgemm_duration_loop.count() * 10e6 / iterations << " ms." << std::endl;
@@ -508,15 +493,30 @@ void benchmarkLoop(int iterations, std::vector<matrix_size>& matrices, const siz
                   
                      std::cout << "Alignment was: " << align << "." << std::endl;
 
+
+    outFile << myarch << "," << M << "x" << K << "x" << N << "," << iterations << "," 
+            << dnnl_matmul_duration_loop.count() * 10e6 / iterations << ","
+            << dnnl_sgemm_duration_loop.count() * 10e6 / iterations << ","
+            << mkl_cblas_sgemm_duration_loop.count() * 10e6 / iterations << ","
+            << dnnl_s8s8_duration_loop.count() * 10e6 / iterations << ","
+            << dnnl_u8s8_duration_loop.count() * 10e6 / iterations << ","
+            << mkl_s8u8_duration_loop.count() * 10e6 / iterations << ","
+            << kenn_duration_loop.count() * 10e6 / iterations << ","
+            << fbgemm_duration_loop.count() * 10e6 / iterations
+            << std::endl;
+  
   }
- }
+
+  outFile.close();
+  std::cout << "Data has been written to " << filename << "." << std::endl;
+}
 
 
 int main(int argc, char const *argv[]) {
 
   //auto status = dnnl_set_max_cpu_isa(dnnl_cpu_isa_avx512_core);
 
-  const size_t align = 256;
+  const size_t align = 64;
 
   int iterations = 100;
   bool use_eigen = false;

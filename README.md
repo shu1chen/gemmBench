@@ -6,6 +6,13 @@ int8_t gemm benchmark between Eigen, kpu's [intgemm](https://github.com/kpu/intg
 git submodule update --init --recursive
 ```
 
+## Use MKL as the BLAS vendor in oneDNN
+```
+source source /opt/intel/oneapi/mkl/latest/env/vars.sh
+```
+Then add `set(DNNL_BLAS_VENDOR MKL CACHE INTERNAL "" FORCE)` in gemmBench/CMakeList.txt and build.
+
+
 ## Compilation
 ```
 mkdir build
