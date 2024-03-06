@@ -23,12 +23,10 @@ void printDNNLStatus(dnnl_status_t& status) {
       std::cout << "The operation failed because of incorrect function arguments." << std::endl;
   } else if (status == dnnl_unimplemented) {
       std::cout << "The operation failed because requested functionality is not implemented." << std::endl;
-  } else if (status == dnnl_iterator_ends) {
+  } else if (status == dnnl_last_impl_reached) {
       std::cout << "Primitive iterator passed over last primitive descriptor." << std::endl;
-  } else if (status == dnnl_iterator_ends) {
-      std::cout << "Primitive or engine failed on execution." << std::endl;
-  } else if (status == dnnl_not_required) {
-      std::cout << "Queried element is not required for given primitive." << std::endl;
+  } else {
+      std::cout << "onednn error: " << status << std::endl;
   }
 }
 
@@ -95,7 +93,7 @@ template<> struct archInfo<Arch::avx512vnni> {
 template<> struct archInfo<Arch::any> {
   using intgemm_ = intgemm::Int8;
   using intgemmShift_ = intgemm::Int8Shift;
-  dnnl_cpu_isa_t dnnl_ = dnnl_cpu_isa_all;
+  dnnl_cpu_isa_t dnnl_ = dnnl_cpu_isa_default;
 #ifdef WITH_MKL
   int mkl_ = -1;
 #endif
@@ -463,31 +461,31 @@ void benchmarkLoop(int iterations, std::vector<matrix_size>& matrices, const siz
       }
     }
     std::cout << std::fixed;
-    std::cout.precision(10);
-    std::cout << "Arch: " << myarch << std::endl << sizes << " in loop, for " << iterations << " interations:" << std::endl;
+    std::cout.precision(3);
+    std::cout << "Arch: " << myarch << std::endl << sizes << " in loop, for " << iterations << " interations, avg:" << std::endl;
     if (use_eigen)
-      std::cout <<"                    Eigen i32gemm took: " << eigen_duration_loop.count() << " seconds." << std::endl;
+      std::cout <<"                    Eigen i32gemm took: " << eigen_duration_loop.count() * 10e6 / iterations << " ms." << std::endl;
 
-    std::cout <<  "                dnnl s8s8s32 gemm took: " << dnnl_duration_loop.count() << " seconds." << std::endl <<
-                  "                dnnl u8s8s32 gemm took: " << dnnlU_duration_loop.count() << " seconds." << std::endl <<
-                  "                       dnnl sgemm took: " << dnnlS_duration_loop.count() << " seconds." << std::endl;
+    std::cout <<  "                DNNL s8s8s32 gemm took: " << dnnl_duration_loop.count() * 10e6 / iterations << " ms." << std::endl <<
+                  "                DNNL u8s8s32 gemm took: " << dnnlU_duration_loop.count() * 10e6 / iterations << " ms." << std::endl <<
+                  "                       DNNL sgemm took: " << dnnlS_duration_loop.count() * 10e6 / iterations << " ms." << std::endl;
 #ifdef WITH_MKL
-      std::cout <<"               cblas_gemm_s8u8s32 took: " << mkl_duration_loop.count() << " seconds." << std::endl;
+      std::cout <<"           MKL cblas_gemm_s8u8s32 took: " << mkl_duration_loop.count() * 10e6 / iterations << " ms." << std::endl;
     if (use_fp32)
-      std::cout <<"                  MKL cblas_sgemm took: " << mkl32_duration_loop.count() << " seconds." << std::endl;
+      std::cout <<"                  MKL cblas_sgemm took: " << mkl32_duration_loop.count() * 10e6 / iterations << " ms." << std::endl;
 #endif
     if (use_fp32)
-      std::cout <<"                 DNNL cblas_sgemm took: " << dnnl32_duration_loop.count() << " seconds." << std::endl;
-  std::cout <<    "                          Intgemm took: " << kenn_duration_loop.count() << " seconds." << std::endl <<
-                  "                  Intgemm Shifted took: " << kennU_duration_loop.count() << " seconds." << std::endl <<
-                  "               Intgemm with prepA took: " << kenn_duration_loop.count() + kenn_prepA_duration_loop.count() << " seconds." << std::endl <<
-                  "             Intgemm with prepA+B took: " << kenn_duration_loop.count() + kenn_prepA_duration_loop.count() + kenn_prepB_duration_loop.count() << " seconds." << std::endl <<
-                  "  Intgemm Shifted took with prepA took: " << kennU_duration_loop.count() + kenn_prepA_duration_loop.count() << " seconds." << std::endl <<
-                  "Intgemm Shifted took with prepA+B took: " << kennU_duration_loop.count() + kenn_prepA_duration_loop.count() + kenn_prepB_duration_loop.count()<< " seconds." << std::endl;
+      std::cout <<"                 DNNL cblas_sgemm took: " << dnnl32_duration_loop.count() * 10e6 / iterations << " ms." << std::endl;
+  std::cout <<    "                          Intgemm took: " << kenn_duration_loop.count() * 10e6 / iterations << " ms." << std::endl <<
+                  "                  Intgemm Shifted took: " << kennU_duration_loop.count() * 10e6 / iterations << " ms." << std::endl <<
+                  "               Intgemm with prepA took: " << (kenn_duration_loop.count() + kenn_prepA_duration_loop.count())  * 10e6 / iterations << " ms." << std::endl <<
+                  "             Intgemm with prepA+B took: " << (kenn_duration_loop.count() + kenn_prepA_duration_loop.count() + kenn_prepB_duration_loop.count()) * 10e6 / iterations << " ms." << std::endl <<
+                  "  Intgemm Shifted took with prepA took: " << (kennU_duration_loop.count() + kenn_prepA_duration_loop.count()) * 10e6 / iterations << " ms." << std::endl <<
+                  "Intgemm Shifted took with prepA+B took: " << (kennU_duration_loop.count() + kenn_prepA_duration_loop.count() + kenn_prepB_duration_loop.count()) * 10e6 / iterations << " ms." << std::endl;
     if (use_fbgemm) {
       std::cout << 
-                  //"fbgemm SparseXDense took: " << fbgemmSPM_duration_loop.count() << " seconds." << std::endl <<
-                  "                    fbgemm Packed took: " << fbgemm_duration_loop.count() << " seconds." << std::endl;
+                  //"fbgemm SparseXDense took: " << fbgemmSPM_duration_loop.count() * 10e6 / iterations << " ms." << std::endl <<
+                  "                    fbgemm Packed took: " << fbgemm_duration_loop.count() * 10e6 / iterations << " ms." << std::endl;
     }
                   
                      std::cout << "Alignment was: " << align << "." << std::endl;
@@ -502,11 +500,11 @@ int main(int argc, char const *argv[]) {
 
   const size_t align = 256;
 
-  int iterations = 1000;
+  int iterations = 100;
   bool use_eigen = false;
   Arch myarch = any;
   if (argc == 1) {
-    iterations = 1000;
+    iterations = 100;
     use_eigen = false;
   } else if (argc == 2) {
     iterations = std::atoi(argv[1]);
@@ -530,7 +528,7 @@ int main(int argc, char const *argv[]) {
     }
     use_eigen = std::atoi(argv[3]);
   } else {
-    std::cerr << "Usage: " << argv[0] << " [iterations=1000] [arch=any] [use_eigen=0]" << std::endl;
+    std::cerr << "Usage: " << argv[0] << " [iterations=100] [arch=any] [use_eigen=0]" << std::endl;
     std::exit(1);
   }
 

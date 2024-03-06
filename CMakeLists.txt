@@ -22,7 +22,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=native -Wno-deprecated-anon-enum-enum-conversion")
 
 add_subdirectory(libs/intgemm)
-add_subdirectory(libs/mkl-dnn)
+add_subdirectory(libs/oneDNN)
 
 #FBGEMM
 set(FBGEMM_BUILD_TESTS OFF CACHE BOOL "Disable fbgemm tests")
@@ -44,7 +44,7 @@ set(LIBRARIES
 
 if(WITH_MKL)
   find_path(MKL_ROOT include/mkl.h
-    PATHS $ENV{MKLROOT} /opt/intel/mkl
+    PATHS $ENV{MKLROOT} /opt/intel/oneapi/mkl/latest
     DOC "Path to MKL root directory")
 
   # Find MKL includes.
