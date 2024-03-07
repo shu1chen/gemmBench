@@ -156,7 +156,7 @@ void benchmarkLoop(int iterations, std::vector<matrix_size>& matrices, const siz
     std::cerr << "Error: opening file failed." << std::endl;
     return;
   }
-  outFile << "Arch,Matrix size MxKxN,Interations,DNNL matmul avg (ms),DNNL sgemm avg (ms),MKL cblas_sgemm avg (ms),DNNL s8s8s32 gemm avg (ms),"
+  outFile << "Arch,Matrix size MxKxN,Iterations,DNNL matmul avg (ms),DNNL sgemm avg (ms),MKL cblas_sgemm avg (ms),DNNL s8s8s32 gemm avg (ms),"
           << "DNNL u8s8s32 gemm avg (ms),MKL s8u8s32 gemm avg (ms),Intgemm avg (ms),fbgemm avg (ms)" << std::endl;
 
   for (auto&& sizes : matrices) {
@@ -548,7 +548,7 @@ int main(int argc, char const *argv[]) {
 
   //auto status = dnnl_set_max_cpu_isa(dnnl_cpu_isa_avx512_core);
 
-  const size_t align = 64;
+  size_t align = 64;
 
   int iterations = 100;
   bool use_eigen = true;
@@ -556,6 +556,7 @@ int main(int argc, char const *argv[]) {
   if (argc == 1) {
     iterations = 100;
     use_eigen = true;
+    align = 64;
   } else if (argc == 2) {
     iterations = std::atoi(argv[1]);
   } else if (argc == 3) {
@@ -576,9 +577,9 @@ int main(int argc, char const *argv[]) {
       std::cerr << "Unrecognised arch: " << archArg << std::endl << "Available options: ssse3 avx2 avx512 avx512vnni any" << std::endl;
       std::exit(1);
     }
-    use_eigen = std::atoi(argv[3]);
+    align = std::atoi(argv[3]);
   } else {
-    std::cerr << "Usage: " << argv[0] << " [iterations=100] [arch=any] [use_eigen=0]" << std::endl;
+    std::cerr << "Usage: " << argv[0] << " [iterations=100] [arch=any] [align=0]" << std::endl;
     std::exit(1);
   }
 

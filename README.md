@@ -25,8 +25,9 @@ If you have [Intel MKL](https://software.intel.com/content/www/us/en/develop/too
 
 ## Usage
 ```
-./benchmark [iterations=1000] [arch=any] [use_eigen=0]
+./gemmBench [iterations=1000] [arch=any] [align=64]
 ```
+align - specifies the alignment (bytes). Must be a valid alignment (valid for aligned_alloc, align > 32)
 
 ## Changing parameters
 Some paramters are hardcoded
