@@ -650,7 +650,7 @@ int main(int argc, char const *argv[])
 	}
 	else
 	{
-		std::cerr << "Usage: " << argv[0] << " [iterations=100] [arch=any] [align=0]" << std::endl;
+		std::cerr << "Usage: " << argv[0] << " [iterations=100] [arch=any] [align=64]" << std::endl;
 		std::exit(1);
 	}
 

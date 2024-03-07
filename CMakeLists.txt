@@ -31,7 +31,7 @@ set(FBGEMM_BUILD_BENCHMARKS OFF CACHE BOOL "Disable fbgemm benchmark")
 add_subdirectory(libs/FBGEMM)
 
 include_directories(libs/intgemm)
-include_directories(libs/dnnl/include)
+include_directories(libs/oneDNN/include)
 include_directories(${CMAKE_BINARY_DIR}/libs/intgemm)
 include_directories(libs/eigen/)
 include_directories(libs/FBGEMM/include)
