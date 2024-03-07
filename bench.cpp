@@ -271,6 +271,10 @@ void benchmarkLoop(int iterations, std::vector<matrix_size>& matrices, const siz
         }
       }
 
+      Eigen::Matrix<float, Eigen::Dynamic,Eigen::Dynamic, Eigen::RowMajor> kenneth_a_tmp = A.cast<float>();
+      Eigen::Matrix<float, Eigen::Dynamic,Eigen::Dynamic, Eigen::RowMajor> kenneth_b_tmp = B.cast<float>();
+      float quant_mult = 127.0 / 2.0;
+
 #ifdef WITH_MKL
       // cblas_gemm_s8u8s32
       {
@@ -299,15 +303,12 @@ void benchmarkLoop(int iterations, std::vector<matrix_size>& matrices, const siz
       }
 
       if (use_fp32) { // MKL cblas_sgemm
-        Eigen::Matrix<float, Eigen::Dynamic,Eigen::Dynamic> eigen_A_tmp = A.cast<float>();
-        Eigen::Matrix<float, Eigen::Dynamic,Eigen::Dynamic> eigen_B_tmp = B.cast<float>();
-
         alloc::AlignedVector<float> A_MKL(M*K, align);
         alloc::AlignedVector<float> B_MKL(K*N, align);
         alloc::AlignedVector<float> C_MKL(M*N, align);
 
-        std::copy(eigen_A_tmp.data(), eigen_A_tmp.data() + eigen_A_tmp.size(), A_MKL.get());
-        std::copy(eigen_B_tmp.data(), eigen_B_tmp.data() + eigen_B_tmp.size(), B_MKL.get());
+        std::copy(kenneth_a_tmp.data(), kenneth_a_tmp.data() + kenneth_a_tmp.size(), A_MKL.get());
+        std::copy(kenneth_b_tmp.data(), kenneth_b_tmp.data() + kenneth_b_tmp.size(), B_MKL.get());
         std::copy(C.data(), C.data() + C.size(), C_MKL.get());
 
         auto mkl_start = std::chrono::system_clock::now();
@@ -326,10 +327,6 @@ void benchmarkLoop(int iterations, std::vector<matrix_size>& matrices, const siz
         mkl_cblas_sgemm_duration_loop += (mkl_end - mkl_start);
       }
 #endif
-
-      Eigen::Matrix<float, Eigen::Dynamic,Eigen::Dynamic, Eigen::RowMajor> kenneth_a_tmp = A.cast<float>();
-      Eigen::Matrix<float, Eigen::Dynamic,Eigen::Dynamic, Eigen::RowMajor> kenneth_b_tmp = B.cast<float>();
-      float quant_mult = 127.0 / 2.0;
 
       //DNNL matmul
       {
@@ -487,6 +484,7 @@ void benchmarkLoop(int iterations, std::vector<matrix_size>& matrices, const siz
         dnnl_u8s8_duration_loop = std::chrono::duration<double>::zero();
         dnnl_matmul_duration_loop = std::chrono::duration<double>::zero();
         dnnl_sgemm_duration_loop = std::chrono::duration<double>::zero();
+        mkl_cblas_sgemm_duration_loop = std::chrono::duration<double>::zero();
         mkl_s8u8_duration_loop = std::chrono::duration<double>::zero();
         kenn_prepA_duration_loop = std::chrono::duration<double>::zero();
         kenn_prepB_duration_loop = std::chrono::duration<double>::zero();
@@ -553,11 +551,11 @@ int main(int argc, char const *argv[]) {
   const size_t align = 64;
 
   int iterations = 100;
-  bool use_eigen = false;
+  bool use_eigen = true;
   Arch myarch = any;
   if (argc == 1) {
     iterations = 100;
-    use_eigen = false;
+    use_eigen = true;
   } else if (argc == 2) {
     iterations = std::atoi(argv[1]);
   } else if (argc == 3) {
