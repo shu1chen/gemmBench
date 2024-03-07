@@ -341,6 +341,7 @@ void benchmarkLoop(int iterations, std::vector<matrix_size>& matrices, const siz
         auto dnnl_matmul_start = std::chrono::system_clock::now();
 
         matmul_prim.execute(engine_stream, matmul_args);
+        engine_stream.wait();
 
         auto dnnl_matmul_end = std::chrono::system_clock::now();
 
