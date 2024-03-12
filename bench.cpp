@@ -381,10 +381,6 @@ void benchmarkLoop(int iterations, std::vector<matrix_size> &matrices, const siz
 
 			// DNNL matmul
 			{
-				alloc::AlignedVector<float> A_DNNL_MATMUL(M * K, align);
-				alloc::AlignedVector<float> B_DNNL_MATMUL(K * N, align);
-				alloc::AlignedVector<float> C_DNNL_MATMUL(M * N, align);
-
 				// Write data to memory object's handles.
 				std::copy(kenneth_a_tmp.data(), kenneth_a_tmp.data() + kenneth_a_tmp.size(), static_cast<uint8_t *>(a_in_mem.get_data_handle()));
 				std::copy(kenneth_b_tmp.data(), kenneth_b_tmp.data() + kenneth_b_tmp.size(), static_cast<uint8_t *>(b_in_mem.get_data_handle()));
