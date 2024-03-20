@@ -30,10 +30,7 @@ If you have [Intel MKL](https://software.intel.com/content/www/us/en/develop/too
 align - specifies the alignment (bytes). Must be a valid alignment (valid for aligned_alloc, align > 32)
 
 ## Changing parameters
-Some paramters are hardcoded
-- The memory alignment can be changed here: https://github.com/XapaJIaMnu/gemmBench/blob/master/bench.cpp#L338
-- Matrix sizes can be changed here: https://github.com/XapaJIaMnu/gemmBench/blob/master/bench.cpp#L372
-- For intgemm to work, you need M and N to be a multiple of 8 and K to be a multiple of 32
+- Some paramters are hardcoded, see main function in bench.cpp for details
 - The number of iterations of the loop can be varied through command one.
 - You can limit `arch` for `intgemm` and `dnnl`. Supported values: `ssse3`, `avx2`, `avx512`, `avx512vnni` and `any`
 - Since `Eigen` is a lot slower than the other two, its execution is disabled by default. To enable it, provide the argument.
