@@ -202,8 +202,8 @@ void benchmarkLoop(int iterations, std::vector<matrix_size> &matrices, const siz
 		std::cerr << "Error: opening file failed." << std::endl;
 		return;
 	}
-	outFile << "Arch,Matrix size MxKxN,Iterations,DNNL matmul avg (ms),DNNL sgemm avg (ms),MKL cblas_sgemm avg (ms),DNNL s8s8s32 gemm avg (ms),"
-			<< "DNNL u8s8s32 gemm avg (ms),MKL s8u8s32 gemm avg (ms),Intgemm avg (ms),fbgemm avg (ms)" << std::endl;
+	outFile << "Arch,Matrix size MxKxN,Iterations,DNNL matmul avg (us),DNNL sgemm avg (us),MKL cblas_sgemm avg (us),DNNL s8s8s32 gemm avg (us),"
+			<< "DNNL u8s8s32 gemm avg (us),MKL s8u8s32 gemm avg (us),Intgemm avg (us),fbgemm avg (us)" << std::endl;
 
 	for (auto &&sizes : matrices)
 	{
@@ -548,31 +548,31 @@ void benchmarkLoop(int iterations, std::vector<matrix_size> &matrices, const siz
 		std::cout << "Arch: " << myarch << std::endl
 				  << sizes << " in loop, for " << iterations << " iterations, avg:" << std::endl;
 
-		std::cout << "                      DNNL matmul took: " << dnnl_matmul_duration_loop.count() * 10e6 / iterations << " ms." << std::endl;
-		std::cout << "                       DNNL sgemm took: " << dnnl_sgemm_duration_loop.count() * 10e6 / iterations << " ms." << std::endl;
+		std::cout << "                      DNNL matmul took: " << dnnl_matmul_duration_loop.count() * 10e6 / iterations << " us." << std::endl;
+		std::cout << "                       DNNL sgemm took: " << dnnl_sgemm_duration_loop.count() * 10e6 / iterations << " us." << std::endl;
 #ifdef WITH_MKL
 		if (use_fp32)
-			std::cout << "                  MKL cblas_sgemm took: " << mkl_cblas_sgemm_duration_loop.count() * 10e6 / iterations << " ms." << std::endl;
+			std::cout << "                  MKL cblas_sgemm took: " << mkl_cblas_sgemm_duration_loop.count() * 10e6 / iterations << " us." << std::endl;
 #endif
 		if (use_eigen)
-			std::cout << "                    Eigen i32gemm took: " << eigen_duration_loop.count() * 10e6 / iterations << " ms." << std::endl;
+			std::cout << "                    Eigen i32gemm took: " << eigen_duration_loop.count() * 10e6 / iterations << " us." << std::endl;
 
-		std::cout << "                DNNL s8s8s32 gemm took: " << dnnl_s8s8_duration_loop.count() * 10e6 / iterations << " ms." << std::endl
-				  << "                DNNL u8s8s32 gemm took: " << dnnl_u8s8_duration_loop.count() * 10e6 / iterations << " ms." << std::endl;
+		std::cout << "                DNNL s8s8s32 gemm took: " << dnnl_s8s8_duration_loop.count() * 10e6 / iterations << " us." << std::endl
+				  << "                DNNL u8s8s32 gemm took: " << dnnl_u8s8_duration_loop.count() * 10e6 / iterations << " us." << std::endl;
 
 #ifdef WITH_MKL
-		std::cout << "                 MKL s8u8s32 gemm took: " << mkl_s8u8_duration_loop.count() * 10e6 / iterations << " ms." << std::endl;
+		std::cout << "                 MKL s8u8s32 gemm took: " << mkl_s8u8_duration_loop.count() * 10e6 / iterations << " us." << std::endl;
 #endif
 
-		std::cout << "                          Intgemm took: " << kenn_duration_loop.count() * 10e6 / iterations << " ms." << std::endl
-				  << "                  Intgemm Shifted took: " << kennU_duration_loop.count() * 10e6 / iterations << " ms." << std::endl
-				  << "               Intgemm with prepA took: " << (kenn_duration_loop.count() + kenn_prepA_duration_loop.count()) * 10e6 / iterations << " ms." << std::endl
-				  << "             Intgemm with prepA+B took: " << (kenn_duration_loop.count() + kenn_prepA_duration_loop.count() + kenn_prepB_duration_loop.count()) * 10e6 / iterations << " ms." << std::endl
-				  << "  Intgemm Shifted took with prepA took: " << (kennU_duration_loop.count() + kenn_prepA_duration_loop.count()) * 10e6 / iterations << " ms." << std::endl
-				  << "Intgemm Shifted took with prepA+B took: " << (kennU_duration_loop.count() + kenn_prepA_duration_loop.count() + kenn_prepB_duration_loop.count()) * 10e6 / iterations << " ms." << std::endl;
+		std::cout << "                          Intgemm took: " << kenn_duration_loop.count() * 10e6 / iterations << " us." << std::endl
+				  << "                  Intgemm Shifted took: " << kennU_duration_loop.count() * 10e6 / iterations << " us." << std::endl
+				  << "               Intgemm with prepA took: " << (kenn_duration_loop.count() + kenn_prepA_duration_loop.count()) * 10e6 / iterations << " us." << std::endl
+				  << "             Intgemm with prepA+B took: " << (kenn_duration_loop.count() + kenn_prepA_duration_loop.count() + kenn_prepB_duration_loop.count()) * 10e6 / iterations << " us." << std::endl
+				  << "  Intgemm Shifted took with prepA took: " << (kennU_duration_loop.count() + kenn_prepA_duration_loop.count()) * 10e6 / iterations << " us." << std::endl
+				  << "Intgemm Shifted took with prepA+B took: " << (kennU_duration_loop.count() + kenn_prepA_duration_loop.count() + kenn_prepB_duration_loop.count()) * 10e6 / iterations << " us." << std::endl;
 		if (use_fbgemm)
 		{
-			std::cout << "                           fbgemm took: " << fbgemm_duration_loop.count() * 10e6 / iterations << " ms." << std::endl;
+			std::cout << "                           fbgemm took: " << fbgemm_duration_loop.count() * 10e6 / iterations << " us." << std::endl;
 		}
 
 		std::cout << "Alignment was: " << align << "." << std::endl;
